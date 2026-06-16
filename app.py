@@ -98,7 +98,61 @@ def add_letterhead_to_header(section, image_path):
     paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
     run = paragraph.add_run()
-    run.add_picture(image_path, width=Cm(21), height=Cm(29.7))
+    inline_shape = run.add_picture(image_path, width=Cm(21), height=Cm(29.7))
+
+    inline = inline_shape._inline
+    anchor = OxmlElement("wp:anchor")
+    anchor.set("distT", "0")
+    anchor.set("distB", "0")
+    anchor.set("distL", "0")
+    anchor.set("distR", "0")
+    anchor.set("simplePos", "0")
+    anchor.set("relativeHeight", "0")
+    anchor.set("behindDoc", "1")
+    anchor.set("locked", "0")
+    anchor.set("layoutInCell", "1")
+    anchor.set("allowOverlap", "1")
+
+    simple_pos = OxmlElement("wp:simplePos")
+    simple_pos.set("x", "0")
+    simple_pos.set("y", "0")
+    anchor.append(simple_pos)
+
+    position_h = OxmlElement("wp:positionH")
+    position_h.set("relativeFrom", "page")
+    pos_h = OxmlElement("wp:posOffset")
+    pos_h.text = "0"
+    position_h.append(pos_h)
+    anchor.append(position_h)
+
+    position_v = OxmlElement("wp:positionV")
+    position_v.set("relativeFrom", "page")
+    pos_v = OxmlElement("wp:posOffset")
+    pos_v.text = "0"
+    position_v.append(pos_v)
+    anchor.append(position_v)
+
+    extent = inline.find(qn("wp:extent"))
+    effect_extent = inline.find(qn("wp:effectExtent"))
+    doc_pr = inline.find(qn("wp:docPr"))
+    c_nv = inline.find(qn("wp:cNvGraphicFramePr"))
+    graphic = inline.find(qn("a:graphic"))
+
+    if extent is not None:
+        anchor.append(extent)
+    if effect_extent is not None:
+        anchor.append(effect_extent)
+
+    anchor.append(OxmlElement("wp:wrapNone"))
+
+    if doc_pr is not None:
+        anchor.append(doc_pr)
+    if c_nv is not None:
+        anchor.append(c_nv)
+    if graphic is not None:
+        anchor.append(graphic)
+
+    inline.getparent().replace(inline, anchor)
 
     paragraph.paragraph_format.space_after = Pt(0)
     paragraph.paragraph_format.space_before = Pt(0)

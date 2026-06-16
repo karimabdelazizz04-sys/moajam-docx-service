@@ -68,10 +68,10 @@ def build_docx(job_number, translated_text, layout_plan, letterhead_path):
     section.page_width = Cm(21)
     section.page_height = Cm(29.7)
 
-    section.top_margin = Cm(5.2)
-    section.bottom_margin = Cm(2.8)
-    section.left_margin = Cm(1.4)
-    section.right_margin = Cm(1.4)
+    section.top_margin = Cm(4.8)
+    section.bottom_margin = Cm(2.4)
+    section.left_margin = Cm(1.5)
+    section.right_margin = Cm(1.5)
     section.header_distance = Cm(0)
     section.footer_distance = Cm(0)
 
@@ -96,12 +96,48 @@ def add_letterhead_to_header(section, image_path):
     header = section.header
     paragraph = header.paragraphs[0]
     paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = paragraph.add_run()
-    run.add_picture(image_path, width=Cm(21), height=Cm(29.7))
 
-    # Put header image behind text as much as python-docx allows.
-    # The safe margins above keep body content away from header/footer/frame.
+    run = paragraph.add_run()
+    inline_shape = run.add_picture(image_path, width=Cm(21), height=Cm(29.7))
+
+    inline = inline_shape._inline
+    inline.tag = qn("wp:anchor")
+
+    inline.set("behindDoc", "1")
+    inline.set("locked", "0")
+    inline.set("layoutInCell", "1")
+    inline.set("allowOverlap", "1")
+    inline.set("simplePos", "0")
+    inline.set("relativeHeight", "0")
+    inline.set("distT", "0")
+    inline.set("distB", "0")
+    inline.set("distL", "0")
+    inline.set("distR", "0")
+
+    for child in list(inline):
+        if child.tag in [qn("wp:extent"), qn("wp:effectExtent"), qn("wp:docPr"), qn("wp:cNvGraphicFramePr"), qn("a:graphic")]:
+            continue
+
+    position_h = OxmlElement("wp:positionH")
+    position_h.set("relativeFrom", "page")
+    pos_h = OxmlElement("wp:posOffset")
+    pos_h.text = "0"
+    position_h.append(pos_h)
+
+    position_v = OxmlElement("wp:positionV")
+    position_v.set("relativeFrom", "page")
+    pos_v = OxmlElement("wp:posOffset")
+    pos_v.text = "0"
+    position_v.append(pos_v)
+
+    wrap_none = OxmlElement("wp:wrapNone")
+
+    inline.insert(0, position_h)
+    inline.insert(1, position_v)
+    inline.insert(2, wrap_none)
+
     paragraph.paragraph_format.space_after = Pt(0)
+    paragraph.paragraph_format.space_before = Pt(0)
 
 
 def set_document_defaults(doc):

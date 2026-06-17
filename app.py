@@ -1,20 +1,27 @@
+````python
 import os
+import io
+import re
+import json
 import uuid
+import base64
 import tempfile
 from urllib.parse import urlparse
 
+import fitz
 import requests
 from flask import Flask, request, jsonify, send_from_directory
+from openai import OpenAI
 from docx import Document
-from docx.shared import Cm, Pt, Inches
+from docx.shared import Cm, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.enum.section import WD_SECTION
+from docx.enum.table import WD_TABLE_ALIGNMENT, WD_CELL_VERTICAL_ALIGNMENT
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.enum.table import WD_TABLE_ALIGNMENT, WD_CELL_VERTICAL_ALIGNMENT
 
 
 app = Flask(__name__)
+client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 OUTPUT_DIR = os.path.join(os.getcwd(), "generated")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -22,7 +29,7 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 @app.route("/")
 def home():
-    return "Moajam DOCX Service Running"
+    return "Moajam DOCX Vision Service Running"
 
 
 @app.route("/generate-docx", methods=["POST"])
@@ -30,15 +37,28 @@ def generate_docx():
     data = request.get_json(force=True, silent=True) or {}
 
     job_number = clean_filename(data.get("job_number") or "MOAJAM-JOB")
-    translated_text = data.get("translated_text") or ""
-    layout_plan = data.get("layout_plan_json") or {}
+    source_file_link = data.get("source_file_link") or ""
     letterhead_url = data.get("letterhead_image_link") or ""
+
+    if not source_file_link:
+        return jsonify({"status": "error", "message": "Missing source_file_link"}), 400
 
     if not letterhead_url:
         return jsonify({"status": "error", "message": "Missing letterhead_image_link"}), 400
 
     try:
+        source_path = download_file(source_file_link)
         letterhead_path = download_file(letterhead_url)
+
+        page_images = source_to_images(source_path)
+        if not page_images:
+            return jsonify({"status": "error", "message": "Could not convert source file to images"}), 500
+
+        ai_data = analyze_with_vision(data, page_images)
+
+        translated_text = ai_data.get("translated_text", "")
+        layout_plan = ai_data.get("layout_plan_json", {})
+
         doc = build_docx(job_number, translated_text, layout_plan, letterhead_path)
 
         filename = f"{job_number}-Final-Translation-{uuid.uuid4().hex[:8]}.docx"
@@ -49,7 +69,13 @@ def generate_docx():
         return jsonify({
             "status": "success",
             "download_url": f"{base_url}/download/{filename}",
-            "filename": filename
+            "filename": filename,
+            "matched_collection": ai_data.get("matched_collection", ""),
+            "matched_document_type": ai_data.get("matched_document_type", ""),
+            "matched_sample": ai_data.get("matched_sample", ""),
+            "layout_type": ai_data.get("layout_type", "structured_legal_translation"),
+            "translated_text": translated_text,
+            "layout_plan_json": layout_plan
         })
 
     except Exception as exc:
@@ -61,22 +87,152 @@ def download(filename):
     return send_from_directory(OUTPUT_DIR, filename, as_attachment=True)
 
 
+def analyze_with_vision(job_data, page_images):
+    content = [{
+        "type": "input_text",
+        "text": build_vision_prompt(job_data)
+    }]
+
+    for img_path in page_images[:10]:
+        content.append({
+            "type": "input_image",
+            "image_url": image_to_data_url(img_path)
+        })
+
+    response = client.responses.create(
+        model=os.environ.get("OPENAI_MODEL", "gpt-4.1-mini"),
+        input=[{
+            "role": "user",
+            "content": content
+        }]
+    )
+
+    text = getattr(response, "output_text", "") or ""
+    if not text:
+        text = str(response)
+
+    return extract_json(text)
+
+
+def build_vision_prompt(job):
+    return f"""
+You are UAE MOJ Legal Translation Assistant.
+
+You can see the original source document pages as images.
+Use the images as the primary authority for:
+- full visible text
+- layout
+- tables
+- fields
+- stamps
+- signatures
+- seals
+- page structure
+- visual order
+
+Translate the full source document into formal UAE legal Arabic.
+Do not invent any names, dates, numbers, amounts, courts, banks, stamps, signatures or facts.
+Preserve identifiers exactly.
+If text is unclear, write [غير واضح] only for that unclear part.
+
+Return ONLY valid JSON. No markdown.
+
+Job data:
+job_number: {job.get("job_number", "")}
+selected_collection: {job.get("selected_collection", "Auto Detect")}
+target_language: {job.get("target_language", "Arabic")}
+font_family: Sakkal Majalla
+font_size: 14pt
+direction: rtl
+alignment: right
+
+Required JSON:
+{{
+  "translated_text": "",
+  "translated_html": "",
+  "matched_collection": "",
+  "matched_document_type": "",
+  "matched_sample": "",
+  "layout_type": "structured_legal_translation",
+  "layout_plan_json": {{
+    "matched_collection": "",
+    "matched_document_type": "",
+    "matched_sample": "",
+    "layout_type": "structured_legal_translation",
+    "font_family": "Sakkal Majalla",
+    "font_size": "14pt",
+    "direction": "rtl",
+    "alignment": "right",
+    "line_height": "1.4",
+    "use_frame": true,
+    "content_width": 10000,
+    "blocks": []
+  }}
+}}
+
+Allowed blocks:
+title, subtitle, section_heading, paragraph, field_table, data_table, signature_block, page_break, spacer.
+
+Use field_table for key-value data.
+Use data_table for real multi-column tables.
+Use signature_block for signatures, stamps, seals and handwritten marks.
+Do not create a page_break after every block.
+Only use page_break when the original document clearly has a new page with unique content.
+"""
+
+
+def extract_json(text):
+    text = text.strip()
+    text = re.sub(r"^```json\s*", "", text, flags=re.I)
+    text = re.sub(r"^```\s*", "", text, flags=re.I)
+    text = re.sub(r"```$", "", text).strip()
+
+    try:
+        return json.loads(text)
+    except Exception:
+        pass
+
+    start = text.find("{")
+    end = text.rfind("}")
+    if start >= 0 and end > start:
+        return json.loads(text[start:end + 1])
+
+    raise ValueError("OpenAI did not return valid JSON")
+
+
+def source_to_images(path):
+    ext = os.path.splitext(path)[1].lower()
+    out = []
+
+    if ext in [".png", ".jpg", ".jpeg"]:
+        return [path]
+
+    if ext == ".pdf":
+        doc = fitz.open(path)
+        for i, page in enumerate(doc):
+            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+            img_path = os.path.join(tempfile.gettempdir(), f"moajam_page_{uuid.uuid4().hex}_{i}.png")
+            pix.save(img_path)
+            out.append(img_path)
+        return out
+
+    return []
+
+
 def build_docx(job_number, translated_text, layout_plan, letterhead_path):
     doc = Document()
 
     section = doc.sections[0]
     section.page_width = Cm(21)
     section.page_height = Cm(29.7)
-
-    section.top_margin = Cm(4.8)
-    section.bottom_margin = Cm(2.4)
+    section.top_margin = Cm(4.2)
+    section.bottom_margin = Cm(2.2)
     section.left_margin = Cm(1.5)
     section.right_margin = Cm(1.5)
     section.header_distance = Cm(0)
     section.footer_distance = Cm(0)
 
     add_letterhead_to_header(section, letterhead_path)
-
     set_document_defaults(doc)
 
     blocks = []
@@ -96,70 +252,14 @@ def add_letterhead_to_header(section, image_path):
     header = section.header
     paragraph = header.paragraphs[0]
     paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-
     run = paragraph.add_run()
-    inline_shape = run.add_picture(image_path, width=Cm(21), height=Cm(29.7))
-
-    inline = inline_shape._inline
-    anchor = OxmlElement("wp:anchor")
-    anchor.set("distT", "0")
-    anchor.set("distB", "0")
-    anchor.set("distL", "0")
-    anchor.set("distR", "0")
-    anchor.set("simplePos", "0")
-    anchor.set("relativeHeight", "0")
-    anchor.set("behindDoc", "1")
-    anchor.set("locked", "0")
-    anchor.set("layoutInCell", "1")
-    anchor.set("allowOverlap", "1")
-
-    simple_pos = OxmlElement("wp:simplePos")
-    simple_pos.set("x", "0")
-    simple_pos.set("y", "0")
-    anchor.append(simple_pos)
-
-    position_h = OxmlElement("wp:positionH")
-    position_h.set("relativeFrom", "page")
-    pos_h = OxmlElement("wp:posOffset")
-    pos_h.text = "0"
-    position_h.append(pos_h)
-    anchor.append(position_h)
-
-    position_v = OxmlElement("wp:positionV")
-    position_v.set("relativeFrom", "page")
-    pos_v = OxmlElement("wp:posOffset")
-    pos_v.text = "0"
-    position_v.append(pos_v)
-    anchor.append(position_v)
-
-    extent = inline.find(qn("wp:extent"))
-    effect_extent = inline.find(qn("wp:effectExtent"))
-    doc_pr = inline.find(qn("wp:docPr"))
-    c_nv = inline.find(qn("wp:cNvGraphicFramePr"))
-    graphic = inline.find(qn("a:graphic"))
-
-    if extent is not None:
-        anchor.append(extent)
-    if effect_extent is not None:
-        anchor.append(effect_extent)
-
-    anchor.append(OxmlElement("wp:wrapNone"))
-
-    if doc_pr is not None:
-        anchor.append(doc_pr)
-    if c_nv is not None:
-        anchor.append(c_nv)
-    if graphic is not None:
-        anchor.append(graphic)
-
-    inline.getparent().replace(inline, anchor)
-
+    run.add_picture(image_path, width=Cm(21), height=Cm(29.7))
     paragraph.paragraph_format.space_after = Pt(0)
     paragraph.paragraph_format.space_before = Pt(0)
 
+
 def set_document_defaults(doc):
-    styles = doc.styles
-    normal = styles["Normal"]
+    normal = doc.styles["Normal"]
     normal.font.name = "Sakkal Majalla"
     normal.font.size = Pt(14)
     normal._element.rPr.rFonts.set(qn("w:cs"), "Sakkal Majalla")
@@ -199,11 +299,8 @@ def add_paragraph(doc, text, bold=False, size=14, align="right"):
     if not text:
         return
 
-    for part in text.split("\n"):
-        part = part.strip()
-        if not part:
-            continue
-
+    parts = [p.strip() for p in text.split("\n") if p.strip()]
+    for part in parts:
         p = doc.add_paragraph()
         set_paragraph_rtl(p)
 
@@ -214,8 +311,8 @@ def add_paragraph(doc, text, bold=False, size=14, align="right"):
         else:
             p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
 
-        p.paragraph_format.space_after = Pt(6)
-        p.paragraph_format.line_spacing = 1.15
+        p.paragraph_format.space_after = Pt(4)
+        p.paragraph_format.line_spacing = 1.1
 
         run = p.add_run(part)
         run.bold = bold
@@ -235,12 +332,10 @@ def add_field_table(doc, block):
     table.style = "Table Grid"
     set_table_rtl(table)
 
-    for row in rows:
-        label, value = row
+    for label, value in rows:
         cells = table.add_row().cells
         cells[0].width = Cm(5)
         cells[1].width = Cm(12.5)
-
         set_cell(cells[0], label, bold=True)
         set_cell(cells[1], value)
 
@@ -303,6 +398,7 @@ def set_paragraph_rtl(paragraph):
     if jc is None:
         jc = OxmlElement("w:jc")
         pPr.append(jc)
+
     jc.set(qn("w:val"), "right")
 
 
@@ -324,8 +420,8 @@ def normalize_rows(rows):
 
     for row in rows:
         if isinstance(row, dict):
-            label = row.get("label") or row.get("key") or row.get("0") or ""
-            value = row.get("value") or row.get("text") or row.get("1") or ""
+            label = row.get("label") or row.get("key") or ""
+            value = row.get("value") or row.get("text") or ""
             output.append([label, value])
         elif isinstance(row, list):
             if len(row) >= 2:
@@ -340,12 +436,9 @@ def normalize_rows(rows):
 
 def download_file(url):
     parsed = urlparse(url)
-    ext = os.path.splitext(parsed.path)[1].lower() or ".png"
+    ext = os.path.splitext(parsed.path)[1].lower() or ".bin"
 
-    if ext not in [".png", ".jpg", ".jpeg"]:
-        ext = ".png"
-
-    response = requests.get(url, timeout=30)
+    response = requests.get(url, timeout=60)
     response.raise_for_status()
 
     fd, path = tempfile.mkstemp(suffix=ext)
@@ -353,6 +446,12 @@ def download_file(url):
         f.write(response.content)
 
     return path
+
+
+def image_to_data_url(path):
+    with open(path, "rb") as f:
+        b64 = base64.b64encode(f.read()).decode("utf-8")
+    return f"data:image/png;base64,{b64}"
 
 
 def clean_filename(value):
@@ -363,3 +462,4 @@ def clean_filename(value):
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
+````

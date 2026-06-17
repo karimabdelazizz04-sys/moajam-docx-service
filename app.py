@@ -92,7 +92,7 @@ def analyze_with_vision(job_data, page_images):
         "text": build_vision_prompt(job_data)
     }]
 
-    for img_path in page_images[:4]:
+    for img_path in page_images[:1]:
         content.append({
             "type": "input_image",
             "image_url": image_to_data_url(img_path),
@@ -210,13 +210,13 @@ def source_to_images(path):
 
     if ext == ".pdf":
         doc = fitz.open(path)
-        max_pages = min(len(doc), 4)
+        max_pages = 1
 
         for i in range(max_pages):
             page = doc[i]
 
             pix = page.get_pixmap(
-                matrix=fitz.Matrix(1.2, 1.2),
+                matrix=fitz.Matrix(0.8, 0.8),
                 alpha=False
             )
 

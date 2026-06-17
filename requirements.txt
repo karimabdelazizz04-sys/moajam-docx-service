@@ -2,6 +2,3 @@ flask
 python-docx
 requests
 gunicorn
-Pillow
-PyMuPDF
-openai

@@ -116,7 +116,7 @@ def analyze_with_vision(job_data, page_images):
 
     if not text:
         text = str(response)
-print("========== OPENAI RAW RESPONSE ==========")
+        print("========== OPENAI RAW RESPONSE ==========")
 print(text[:10000])
     return extract_json(text)
 

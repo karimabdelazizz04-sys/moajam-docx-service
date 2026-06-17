@@ -37,6 +37,7 @@ def generate_docx():
 
     job_number = clean_filename(data.get("job_number") or "MOAJAM-JOB")
     source_file_link = data.get("source_file_link") or ""
+    source_text = data.get("source_text") or ""
     letterhead_url = data.get("letterhead_image_link") or ""
 
     if not source_file_link:
@@ -116,25 +117,22 @@ def analyze_with_vision(job_data, page_images):
 
 
 def build_vision_prompt(job):
+    source_text = str(job.get("source_text") or "").strip()
+
     return f"""
 You are UAE MOJ Legal Translation Assistant.
 
-You can see the original source document pages as images.
-Use the images as the primary authority for:
-- full visible text
-- layout
-- tables
-- fields
-- stamps
-- signatures
-- seals
-- page structure
-- visual order
+You can see the FIRST PAGE of the original document as an image.
+Use the image ONLY to understand visual layout style, table style, headings, stamps/signatures if visible, and general document type.
 
-Translate the full source document into formal UAE legal Arabic.
-Do not invent any names, dates, numbers, amounts, courts, banks, stamps, signatures or facts.
+Use SOURCE OCR TEXT below as the main authority for the full translation content.
+Translate all SOURCE OCR TEXT into formal UAE legal Arabic.
+Do not invent any names, dates, numbers, amounts, banks, parties, stamps, signatures or facts.
 Preserve identifiers exactly.
-If text is unclear, write [غير واضح] only for that unclear part.
+If a value is unclear in the OCR, write [غير واضح].
+
+SOURCE OCR TEXT:
+{source_text}
 
 Return ONLY valid JSON. No markdown.
 
@@ -174,13 +172,16 @@ Required JSON:
 Allowed blocks:
 title, subtitle, section_heading, paragraph, field_table, data_table, signature_block, page_break, spacer.
 
-Use field_table for key-value data.
-Use data_table for real multi-column tables.
-Use signature_block for signatures, stamps, seals and handwritten marks.
-Do not create a page_break after every block.
-Only use page_break when the original document clearly has a new page with unique content.
-"""
-
+Rules for layout_plan_json.blocks:
+- Use the FIRST PAGE IMAGE as visual layout guidance.
+- Use SOURCE OCR TEXT for complete content.
+- Do not create one page per field.
+- Do not add page_break after every block.
+- Use field_table for key-value fields.
+- Use data_table for multi-column tables.
+- Keep related fields in the same table where possible.
+- Use signature_block only for visible or OCR-mentioned stamps, seals, signatures.
+- Output must fit inside a legal translation letterhead/frame.
 
 def extract_json(text):
     text = text.strip()

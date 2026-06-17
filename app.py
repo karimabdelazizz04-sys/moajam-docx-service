@@ -92,34 +92,12 @@ def analyze_with_vision(job_data, page_images):
         "text": build_vision_prompt(job_data)
     }]
 
-    for img_path in page_images[:4]:
-       def source_to_images(path):
-    ext = os.path.splitext(path)[1].lower()
-    out = []
-
-    if ext in [".png", ".jpg", ".jpeg"]:
-        return [path]
-
-    if ext == ".pdf":
-        doc = fitz.open(path)
-        max_pages = min(len(doc), 4)
-
-        for i in range(max_pages):
-            page = doc[i]
-            pix = page.get_pixmap(matrix=fitz.Matrix(1.2, 1.2), alpha=False)
-
-            img_path = os.path.join(
-                tempfile.gettempdir(),
-                f"moajam_page_{uuid.uuid4().hex}_{i}.jpg"
-            )
-
-            pix.save(img_path, output="jpeg", jpg_quality=65)
-            out.append(img_path)
-
-        doc.close()
-        return out
-
-    return []
+for img_path in page_images[:4]:
+    content.append({
+        "type": "input_image",
+        "image_url": image_to_data_url(img_path),
+        "detail": "low"
+    })
 
     response = client.responses.create(
         model=os.environ.get("OPENAI_MODEL", "gpt-4.1-mini"),
@@ -231,11 +209,25 @@ def source_to_images(path):
 
     if ext == ".pdf":
         doc = fitz.open(path)
-        for i, page in enumerate(doc):
-            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
-            img_path = os.path.join(tempfile.gettempdir(), f"moajam_page_{uuid.uuid4().hex}_{i}.png")
+        max_pages = min(len(doc), 4)
+
+        for i in range(max_pages):
+            page = doc[i]
+
+            pix = page.get_pixmap(
+                matrix=fitz.Matrix(1.2, 1.2),
+                alpha=False
+            )
+
+            img_path = os.path.join(
+                tempfile.gettempdir(),
+                f"moajam_page_{uuid.uuid4().hex}_{i}.jpg"
+            )
+
             pix.save(img_path)
             out.append(img_path)
+
+        doc.close()
         return out
 
     return []

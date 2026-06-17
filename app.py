@@ -39,6 +39,8 @@ def home():
 def generate_docx():
     data = request.get_json(force=True, silent=True) or {}
 
+    print("SOURCE TEXT LENGTH:", len(str(data.get("source_text") or "")))
+
     job_number = clean_filename(data.get("job_number") or "MOAJAM-JOB")
     source_file_link = data.get("source_file_link") or ""
     letterhead_url = data.get("letterhead_image_link") or ""
@@ -116,8 +118,10 @@ def analyze_with_vision(job_data, page_images):
 
     if not text:
         text = str(response)
-        print("========== OPENAI RAW RESPONSE ==========")
-print(text[:10000])
+        
+    print("========== OPENAI RAW RESPONSE ==========")
+    print(text[:10000])
+
     return extract_json(text)
 
 

@@ -92,12 +92,12 @@ def analyze_with_vision(job_data, page_images):
         "text": build_vision_prompt(job_data)
     }]
 
-for img_path in page_images[:4]:
-    content.append({
-        "type": "input_image",
-        "image_url": image_to_data_url(img_path),
-        "detail": "low"
-    })
+    for img_path in page_images[:4]:
+        content.append({
+            "type": "input_image",
+            "image_url": image_to_data_url(img_path),
+            "detail": "low"
+        })
 
     response = client.responses.create(
         model=os.environ.get("OPENAI_MODEL", "gpt-4.1-mini"),
@@ -108,6 +108,7 @@ for img_path in page_images[:4]:
     )
 
     text = getattr(response, "output_text", "") or ""
+
     if not text:
         text = str(response)
 

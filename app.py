@@ -1,5 +1,4 @@
 import os
-import io
 import re
 import json
 import uuid
@@ -20,7 +19,12 @@ from docx.oxml.ns import qn
 
 
 app = Flask(__name__)
-client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+if not OPENAI_API_KEY:
+    raise RuntimeError("Missing OPENAI_API_KEY environment variable")
+
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 OUTPUT_DIR = os.path.join(os.getcwd(), "generated")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -37,7 +41,6 @@ def generate_docx():
 
     job_number = clean_filename(data.get("job_number") or "MOAJAM-JOB")
     source_file_link = data.get("source_file_link") or ""
-    source_text = data.get("source_text") or ""
     letterhead_url = data.get("letterhead_image_link") or ""
 
     if not source_file_link:
@@ -93,6 +96,7 @@ def analyze_with_vision(job_data, page_images):
         "text": build_vision_prompt(job_data)
     }]
 
+    # Render Free memory-safe mode: use first page image only for visual layout guidance.
     for img_path in page_images[:1]:
         content.append({
             "type": "input_image",
@@ -123,13 +127,20 @@ def build_vision_prompt(job):
 You are UAE MOJ Legal Translation Assistant.
 
 You can see the FIRST PAGE of the original document as an image.
-Use the image ONLY to understand visual layout style, table style, headings, stamps/signatures if visible, and general document type.
+Use the image ONLY to understand:
+- document type
+- visual layout style
+- table style
+- headings
+- stamp/signature/seal placement if visible
+- overall page structure
 
 Use SOURCE OCR TEXT below as the main authority for the full translation content.
-Translate all SOURCE OCR TEXT into formal UAE legal Arabic.
+If SOURCE OCR TEXT is available, translate all of it into formal UAE legal Arabic.
+If SOURCE OCR TEXT is empty, translate only the visible first page and do not invent unseen pages.
 Do not invent any names, dates, numbers, amounts, banks, parties, stamps, signatures or facts.
 Preserve identifiers exactly.
-If a value is unclear in the OCR, write [غير واضح].
+If a value is unclear in the OCR or image, write [غير واضح].
 
 SOURCE OCR TEXT:
 {source_text}
@@ -144,6 +155,17 @@ font_family: Sakkal Majalla
 font_size: 14pt
 direction: rtl
 alignment: right
+
+Collection routing:
+A_Banking_Financial: cheques, returned cheques, bank notices, bank return memos.
+B_Shipping_Customs_Logistics: shipping, customs, logistics, freight, invoices, bills of lading, packing lists, cargo, marine insurance, logistics certificates.
+C_Corporate_Commercial: company documents, licenses, certificates, resolutions, quotations.
+D_POA_Legal_Instruments: POA, agency, authorizations, declarations, legal instruments.
+E_Government_Personal: passports, IDs, certificates, immigration/civil documents.
+F_Tenancy_Real_Estate: tenancy, Ejari, real estate, landlord/tenant evidence.
+G_Correspondence_Evidence: emails, WhatsApp, notices, letters, screenshots, demand letters.
+H_Medical: medical, hospital, lab, radiology, prescriptions, medical certificates.
+I_Translator_Affairs_Internal: UAE legal translation rules, glossary, official terms.
 
 Required JSON:
 {{
@@ -169,7 +191,7 @@ Required JSON:
   }}
 }}
 
-Allowed blocks:
+Allowed block types:
 title, subtitle, section_heading, paragraph, field_table, data_table, signature_block, page_break, spacer.
 
 Rules for layout_plan_json.blocks:
@@ -182,9 +204,11 @@ Rules for layout_plan_json.blocks:
 - Keep related fields in the same table where possible.
 - Use signature_block only for visible or OCR-mentioned stamps, seals, signatures.
 - Output must fit inside a legal translation letterhead/frame.
+"""
+
 
 def extract_json(text):
-    text = text.strip()
+    text = str(text or "").strip()
     text = re.sub(r"^```json\s*", "", text, flags=re.I)
     text = re.sub(r"^```\s*", "", text, flags=re.I)
     text = re.sub(r"```$", "", text).strip()
@@ -196,10 +220,15 @@ def extract_json(text):
 
     start = text.find("{")
     end = text.rfind("}")
-    if start >= 0 and end > start:
-        return json.loads(text[start:end + 1])
 
-    raise ValueError("OpenAI did not return valid JSON")
+    if start >= 0 and end > start:
+        candidate = text[start:end + 1]
+        try:
+            return json.loads(candidate)
+        except Exception as exc:
+            raise ValueError("OpenAI returned invalid JSON: " + str(exc) + " | RAW: " + text[:1200])
+
+    raise ValueError("OpenAI returned no JSON object. RAW: " + text[:1200])
 
 
 def source_to_images(path):
@@ -211,15 +240,11 @@ def source_to_images(path):
 
     if ext == ".pdf":
         doc = fitz.open(path)
-        max_pages = 1
+        max_pages = min(len(doc), 1)
 
         for i in range(max_pages):
             page = doc[i]
-
-            pix = page.get_pixmap(
-                matrix=fitz.Matrix(0.8, 0.8),
-                alpha=False
-            )
+            pix = page.get_pixmap(matrix=fitz.Matrix(0.8, 0.8), alpha=False)
 
             img_path = os.path.join(
                 tempfile.gettempdir(),
@@ -465,9 +490,13 @@ def download_file(url):
 
 
 def image_to_data_url(path):
+    ext = os.path.splitext(path)[1].lower()
+    mime = "image/jpeg" if ext in [".jpg", ".jpeg"] else "image/png"
+
     with open(path, "rb") as f:
         b64 = base64.b64encode(f.read()).decode("utf-8")
-    return f"data:image/png;base64,{b64}"
+
+    return f"data:{mime};base64,{b64}"
 
 
 def clean_filename(value):

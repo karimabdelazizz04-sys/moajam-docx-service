@@ -45,7 +45,7 @@ def generate_docx():
     try:
         letterhead_path = download_file(letterhead_url)
 
-        doc = Document()
+        doc = Document("letterhead_template.docx")
         setup_doc(doc, letterhead_path)
         set_document_defaults(doc)
 

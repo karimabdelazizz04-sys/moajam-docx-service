@@ -46,7 +46,6 @@ def generate_docx():
         letterhead_path = download_file(letterhead_url)
 
         doc = Document("letterhead_template.docx")
-        setup_doc(doc, letterhead_path)
         set_document_defaults(doc)
 
         html = final_html if final_html else text_to_html(translated_text)
@@ -82,7 +81,6 @@ def setup_doc(doc, letterhead_path):
     section.right_margin = Cm(1.4)
     section.header_distance = Cm(0)
     section.footer_distance = Cm(0)
-    add_letterhead_to_header(section, letterhead_path)
 
 
 def add_letterhead_to_header(section, image_path):

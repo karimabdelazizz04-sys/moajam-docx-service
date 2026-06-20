@@ -93,9 +93,40 @@ def add_letterhead_to_header(section, image_path):
     paragraph.paragraph_format.space_before = Pt(0)
 
     run = paragraph.add_run()
-    run.add_picture(image_path, width=Cm(21), height=Cm(29.7))
+    inline_shape = run.add_picture(image_path, width=Cm(21), height=Cm(29.7))
 
+    inline = inline_shape._inline
+    inline.tag = qn("wp:anchor")
 
+    inline.set("behindDoc", "1")
+    inline.set("locked", "0")
+    inline.set("layoutInCell", "1")
+    inline.set("allowOverlap", "1")
+    inline.set("simplePos", "0")
+    inline.set("relativeHeight", "0")
+    inline.set("distT", "0")
+    inline.set("distB", "0")
+    inline.set("distL", "0")
+    inline.set("distR", "0")
+
+    position_h = OxmlElement("wp:positionH")
+    position_h.set("relativeFrom", "page")
+    pos_h = OxmlElement("wp:posOffset")
+    pos_h.text = "0"
+    position_h.append(pos_h)
+
+    position_v = OxmlElement("wp:positionV")
+    position_v.set("relativeFrom", "page")
+    pos_v = OxmlElement("wp:posOffset")
+    pos_v.text = "0"
+    position_v.append(pos_v)
+
+    wrap_none = OxmlElement("wp:wrapNone")
+
+    inline.insert(0, position_h)
+    inline.insert(1, position_v)
+    inline.insert(2, wrap_none)
+    
 def set_document_defaults(doc):
     normal = doc.styles["Normal"]
     normal.font.name = "Sakkal Majalla"

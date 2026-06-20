@@ -2,7 +2,6 @@ import os
 import re
 import uuid
 import tempfile
-from urllib.parse import urlparse
 
 import requests
 from bs4 import BeautifulSoup, NavigableString, Tag
@@ -29,19 +28,58 @@ def home():
 
 @app.route("/generate-docx", methods=["POST"])
 def generate_docx():
-    data = request.get_json(force=True, silent=True) or {}
+data = request.get_json(force=True, silent=True) or {}
 
-    job_number = clean_filename(data.get("job_number") or "MOAJAM-JOB")
-    final_html = data.get("final_html") or data.get("translated_html") or ""
-    translated_text = data.get("translated_text") or ""
-    doc = Document("letterhead_template.docx")
+job_number = clean_filename(data.get("job_number") or "MOAJAM-JOB")
+final_html = data.get("final_html") or data.get("translated_html") or ""
+translated_text = data.get("translated_text") or ""
+
+if not final_html and not translated_text:
+    return jsonify({
+        "status": "error",
+        "message": "Missing final_html/translated_text"
+    }), 400
+
+try:
+
+    doc = Document(
+        os.path.join(
+            os.path.dirname(__file__),
+            "letterhead_template.docx"
+        )
+    )
+
+    set_document_defaults(doc)
+
+    html = final_html if final_html else text_to_html(translated_text)
+
+    add_html_to_docx(doc, html)
+
+    filename = f"{job_number}-Final-Translation-{uuid.uuid4().hex[:8]}.docx"
+
+    output_path = os.path.join(OUTPUT_DIR, filename)
+
+    doc.save(output_path)
+
+    base_url = request.host_url.rstrip("/")
+
+    return jsonify({
+        "status": "success",
+        "download_url": f"{base_url}/download/{filename}",
+        "filename": filename
+    })
+
+except Exception as exc:
+    return jsonify({
+        "status": "error",
+        "message": str(exc)
+    }), 500
 
     
     if not final_html and not translated_text:
         return jsonify({"status": "error", "message": "Missing final_html/translated_text"}), 400
 
     try:
-        letterhead_path = download_file(letterhead_url)
 
         doc = Document(os.path.join(os.path.dirname(__file__), "letterhead_template.docx"))
         set_document_defaults(doc)
@@ -80,48 +118,6 @@ def setup_doc(doc, letterhead_path):
     section.header_distance = Cm(0)
     section.footer_distance = Cm(0)
 
-
-def add_letterhead_to_header(section, image_path):
-    header = section.header
-    paragraph = header.paragraphs[0]
-    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    paragraph.paragraph_format.space_after = Pt(0)
-    paragraph.paragraph_format.space_before = Pt(0)
-
-    run = paragraph.add_run()
-    inline_shape = run.add_picture(image_path, width=Cm(21), height=Cm(29.7))
-
-    inline = inline_shape._inline
-    inline.tag = qn("wp:anchor")
-
-    inline.set("behindDoc", "1")
-    inline.set("locked", "0")
-    inline.set("layoutInCell", "1")
-    inline.set("allowOverlap", "1")
-    inline.set("simplePos", "0")
-    inline.set("relativeHeight", "0")
-    inline.set("distT", "0")
-    inline.set("distB", "0")
-    inline.set("distL", "0")
-    inline.set("distR", "0")
-
-    position_h = OxmlElement("wp:positionH")
-    position_h.set("relativeFrom", "page")
-    pos_h = OxmlElement("wp:posOffset")
-    pos_h.text = "0"
-    position_h.append(pos_h)
-
-    position_v = OxmlElement("wp:positionV")
-    position_v.set("relativeFrom", "page")
-    pos_v = OxmlElement("wp:posOffset")
-    pos_v.text = "0"
-    position_v.append(pos_v)
-
-    wrap_none = OxmlElement("wp:wrapNone")
-
-    inline.insert(0, position_h)
-    inline.insert(1, position_v)
-    inline.insert(2, wrap_none)
     
 def set_document_defaults(doc):
     normal = doc.styles["Normal"]
@@ -433,21 +429,6 @@ def escape_html(value):
     return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def download_file(url):
-    parsed = urlparse(url)
-    ext = os.path.splitext(parsed.path)[1].lower() or ".png"
-
-    if ext not in [".png", ".jpg", ".jpeg"]:
-        ext = ".png"
-
-    response = requests.get(url, timeout=60)
-    response.raise_for_status()
-
-    fd, path = tempfile.mkstemp(suffix=ext)
-    with os.fdopen(fd, "wb") as f:
-        f.write(response.content)
-
-    return path
 
 
 def clean_filename(value):

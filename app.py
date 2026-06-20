@@ -73,10 +73,10 @@ def setup_doc(doc, letterhead_path):
     section = doc.sections[0]
     section.page_width = Cm(21)
     section.page_height = Cm(29.7)
-    section.top_margin = Cm(4.4)
-    section.bottom_margin = Cm(2.6)
-    section.left_margin = Cm(1.4)
-    section.right_margin = Cm(1.4)
+    section.top_margin = Cm(4.5)
+    section.bottom_margin = Cm(3.5)
+    section.left_margin = Cm(1.8)
+    section.right_margin = Cm(1.8)
     section.header_distance = Cm(0)
     section.footer_distance = Cm(0)
 
@@ -233,6 +233,7 @@ def add_paragraph(doc, text, bold=False, size=14, align="right", color=None):
 
         run._element.rPr.rFonts.set(qn("w:cs"), "Sakkal Majalla")
         run._element.rPr.rFonts.set(qn("w:eastAsia"), "Sakkal Majalla")
+        
 
 
 def add_table(doc, table_el):
@@ -292,7 +293,7 @@ def set_cell(cell, text, bold=False, bg=None, color=None):
 
     p = cell.paragraphs[0]
     set_paragraph_rtl(p)
-    p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
     p.paragraph_format.space_after = Pt(0)
     p.paragraph_format.space_before = Pt(0)
 
@@ -322,7 +323,8 @@ def set_paragraph_rtl(paragraph):
     if jc is None:
         jc = OxmlElement("w:jc")
         pPr.append(jc)
-    jc.set(qn("w:val"), "right")
+
+    jc.set(qn("w:val"), "both")
 
 
 def set_table_rtl(table):

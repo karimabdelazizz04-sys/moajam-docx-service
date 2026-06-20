@@ -36,9 +36,7 @@ def generate_docx():
     translated_text = data.get("translated_text") or ""
     letterhead_url = data.get("letterhead_image_link") or ""
 
-    if not letterhead_url:
-        return jsonify({"status": "error", "message": "Missing letterhead_image_link"}), 400
-
+    
     if not final_html and not translated_text:
         return jsonify({"status": "error", "message": "Missing final_html/translated_text"}), 400
 

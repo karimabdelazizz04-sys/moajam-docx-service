@@ -43,7 +43,7 @@ def generate_docx():
     try:
         letterhead_path = download_file(letterhead_url)
 
-        doc = Document("letterhead_template.docx")
+        doc = Document(os.path.join(os.path.dirname(__file__), "letterhead_template.docx"))
         set_document_defaults(doc)
 
         html = final_html if final_html else text_to_html(translated_text)

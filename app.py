@@ -1,12 +1,9 @@
 import os
 import re
 import uuid
-import tempfile
 
-import requests
 from bs4 import BeautifulSoup, NavigableString, Tag
 from flask import Flask, request, jsonify, send_from_directory
-
 from docx import Document
 from docx.shared import Cm, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -17,71 +14,34 @@ from docx.oxml.ns import qn
 
 app = Flask(__name__)
 
-OUTPUT_DIR = os.path.join(os.getcwd(), "generated")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+OUTPUT_DIR = os.path.join(BASE_DIR, "generated")
+TEMPLATE_PATH = os.path.join(BASE_DIR, "letterhead_template.docx")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 
 @app.route("/")
 def home():
-    return "Moajam Pure Python HTML DOCX Service Running"
+    return "Moajam Template HTML DOCX Service Running"
 
 
 @app.route("/generate-docx", methods=["POST"])
 def generate_docx():
-data = request.get_json(force=True, silent=True) or {}
+    data = request.get_json(force=True, silent=True) or {}
 
-job_number = clean_filename(data.get("job_number") or "MOAJAM-JOB")
-final_html = data.get("final_html") or data.get("translated_html") or ""
-translated_text = data.get("translated_text") or ""
+    job_number = clean_filename(data.get("job_number") or "MOAJAM-JOB")
+    final_html = data.get("final_html") or data.get("translated_html") or ""
+    translated_text = data.get("translated_text") or ""
 
-if not final_html and not translated_text:
-    return jsonify({
-        "status": "error",
-        "message": "Missing final_html/translated_text"
-    }), 400
-
-try:
-
-    doc = Document(
-        os.path.join(
-            os.path.dirname(__file__),
-            "letterhead_template.docx"
-        )
-    )
-
-    set_document_defaults(doc)
-
-    html = final_html if final_html else text_to_html(translated_text)
-
-    add_html_to_docx(doc, html)
-
-    filename = f"{job_number}-Final-Translation-{uuid.uuid4().hex[:8]}.docx"
-
-    output_path = os.path.join(OUTPUT_DIR, filename)
-
-    doc.save(output_path)
-
-    base_url = request.host_url.rstrip("/")
-
-    return jsonify({
-        "status": "success",
-        "download_url": f"{base_url}/download/{filename}",
-        "filename": filename
-    })
-
-except Exception as exc:
-    return jsonify({
-        "status": "error",
-        "message": str(exc)
-    }), 500
-
-    
     if not final_html and not translated_text:
         return jsonify({"status": "error", "message": "Missing final_html/translated_text"}), 400
 
-    try:
+    if not os.path.exists(TEMPLATE_PATH):
+        return jsonify({"status": "error", "message": f"Template not found: {TEMPLATE_PATH}"}), 500
 
-        doc = Document(os.path.join(os.path.dirname(__file__), "letterhead_template.docx"))
+    try:
+        doc = Document(TEMPLATE_PATH)
+        setup_template_sections(doc)
         set_document_defaults(doc)
 
         html = final_html if final_html else text_to_html(translated_text)
@@ -107,18 +67,16 @@ def download(filename):
     return send_from_directory(OUTPUT_DIR, filename, as_attachment=True)
 
 
-def setup_doc(doc, letterhead_path):
-    section = doc.sections[0]
-    section.page_width = Cm(21)
-    section.page_height = Cm(29.7)
-    section.top_margin = Cm(4.5)
-    section.bottom_margin = Cm(3.5)
-    section.left_margin = Cm(1.8)
-    section.right_margin = Cm(1.8)
-    section.header_distance = Cm(0)
-    section.footer_distance = Cm(0)
+def setup_template_sections(doc):
+    for section in doc.sections:
+        section.top_margin = Cm(4.5)
+        section.bottom_margin = Cm(3.5)
+        section.left_margin = Cm(1.8)
+        section.right_margin = Cm(1.8)
+        section.header_distance = Cm(0)
+        section.footer_distance = Cm(0)
 
-    
+
 def set_document_defaults(doc):
     normal = doc.styles["Normal"]
     normal.font.name = "Sakkal Majalla"
@@ -130,7 +88,6 @@ def set_document_defaults(doc):
 def add_html_to_docx(doc, html):
     soup = BeautifulSoup(str(html), "html5lib")
     body = soup.body if soup.body else soup
-
     for child in body.children:
         add_node(doc, child)
 
@@ -148,34 +105,26 @@ def add_node(doc, node):
     name = node.name.lower()
 
     if name in ["html", "body", "section", "article", "main", "div"]:
-        # If div is a simple text container, keep it as one paragraph.
-        direct_complex = node.find(["table", "h1", "h2", "h3", "ul", "ol"], recursive=False)
+        direct_complex = node.find(["table", "h1", "h2", "h3", "h4", "ul", "ol"], recursive=False)
         if direct_complex:
             for child in node.children:
                 add_node(doc, child)
         else:
             text = clean_text(node.get_text("\n", strip=True))
             if text:
-                add_paragraph(
-                    doc,
-                    text,
-                    bold=element_is_bold(node),
-                    align=get_align(node),
-                    color=get_color(node),
-                    size=get_font_size(node, 14),
-                )
+                add_paragraph(doc, text, bold=element_is_bold(node), align=get_align(node, "justify"), color=get_color(node), size=get_font_size(node, 14))
         return
 
     if name in ["h1", "h2", "h3", "h4"]:
         size = {"h1": 18, "h2": 16, "h3": 15, "h4": 14}.get(name, 14)
-        align = "center" if name == "h1" else "right"
-        add_paragraph(doc, node.get_text(" ", strip=True), bold=True, size=size, align=get_align(node, align), color=get_color(node))
+        default_align = "center" if name == "h1" else "right"
+        add_paragraph(doc, node.get_text(" ", strip=True), bold=True, size=size, align=get_align(node, default_align), color=get_color(node))
         return
 
-    if name in ["p"]:
+    if name == "p":
         text = clean_text(node.get_text("\n", strip=True))
         if text:
-            add_paragraph(doc, text, bold=element_is_bold(node), align=get_align(node), color=get_color(node), size=get_font_size(node, 14))
+            add_paragraph(doc, text, bold=element_is_bold(node), align=get_align(node, "justify"), color=get_color(node), size=get_font_size(node, 14))
         return
 
     if name == "br":
@@ -184,7 +133,7 @@ def add_node(doc, node):
 
     if name in ["ul", "ol"]:
         for li in node.find_all("li", recursive=False):
-            add_paragraph(doc, "• " + clean_text(li.get_text(" ", strip=True)), align="right")
+            add_paragraph(doc, "• " + clean_text(li.get_text(" ", strip=True)), align="justify")
         return
 
     if name == "table":
@@ -199,7 +148,7 @@ def add_node(doc, node):
         add_paragraph(doc, text)
 
 
-def add_paragraph(doc, text, bold=False, size=14, align="right", color=None):
+def add_paragraph(doc, text, bold=False, size=14, align="justify", color=None):
     text = clean_text(text)
     if not text:
         return
@@ -211,8 +160,9 @@ def add_paragraph(doc, text, bold=False, size=14, align="right", color=None):
         p.alignment = {
             "center": WD_ALIGN_PARAGRAPH.CENTER,
             "left": WD_ALIGN_PARAGRAPH.LEFT,
+            "right": WD_ALIGN_PARAGRAPH.RIGHT,
             "justify": WD_ALIGN_PARAGRAPH.JUSTIFY,
-        }.get(align, WD_ALIGN_PARAGRAPH.RIGHT)
+        }.get(align, WD_ALIGN_PARAGRAPH.JUSTIFY)
 
         p.paragraph_format.space_after = Pt(4)
         p.paragraph_format.space_before = Pt(0)
@@ -229,7 +179,6 @@ def add_paragraph(doc, text, bold=False, size=14, align="right", color=None):
 
         run._element.rPr.rFonts.set(qn("w:cs"), "Sakkal Majalla")
         run._element.rPr.rFonts.set(qn("w:eastAsia"), "Sakkal Majalla")
-        
 
 
 def add_table(doc, table_el):
@@ -319,7 +268,6 @@ def set_paragraph_rtl(paragraph):
     if jc is None:
         jc = OxmlElement("w:jc")
         pPr.append(jc)
-
     jc.set(qn("w:val"), "both")
 
 
@@ -335,19 +283,20 @@ def get_style(el):
     return (el.get("style") or "") if isinstance(el, Tag) else ""
 
 
-def get_align(el, default="right"):
+def get_align(el, default="justify"):
     style = get_style(el).lower().replace(" ", "")
     if "text-align:center" in style:
         return "center"
     if "text-align:left" in style:
         return "left"
+    if "text-align:right" in style:
+        return "right"
     if "text-align:justify" in style:
         return "justify"
 
     align = (el.get("align") or "").lower() if isinstance(el, Tag) else ""
     if align in ["right", "left", "center", "justify"]:
         return align
-
     return default
 
 
@@ -427,8 +376,6 @@ def text_to_html(text):
 
 def escape_html(value):
     return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-
 
 
 def clean_filename(value):

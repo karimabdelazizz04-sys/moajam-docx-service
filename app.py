@@ -34,7 +34,7 @@ def generate_docx():
     job_number = clean_filename(data.get("job_number") or "MOAJAM-JOB")
     final_html = data.get("final_html") or data.get("translated_html") or ""
     translated_text = data.get("translated_text") or ""
-    letterhead_url = data.get("letterhead_image_link") or ""
+    doc = Document("letterhead_template.docx")
 
     
     if not final_html and not translated_text:

@@ -1,5 +1,6 @@
 flask
-python-docx
 requests
 gunicorn
+pypandoc
+python-docx
 beautifulsoup4

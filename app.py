@@ -197,7 +197,6 @@ def build_final_docx_from_template(content_docx_path, output_path):
     content_doc = Document(str(content_docx_path))
 
     apply_docx_layout(template_doc)
-    clear_template_body_only(template_doc)
 
     body = template_doc.element.body
     sectPr = body.sectPr
@@ -212,15 +211,6 @@ def build_final_docx_from_template(content_docx_path, output_path):
             body.append(deepcopy(element))
 
     template_doc.save(str(output_path))
-
-
-def clear_template_body_only(doc):
-    body = doc.element.body
-    sectPr = body.sectPr
-
-    for child in list(body):
-        if child is not sectPr:
-            body.remove(child)
 
 
 def apply_docx_layout(doc):

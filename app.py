@@ -5,12 +5,16 @@ import subprocess
 from pathlib import Path
 from docx import Document
 from docx.shared import Cm
+from copy import deepcopy
+from docx import Document
+from docx.shared import Cm
 from flask import Flask, request, jsonify, send_from_directory
 
 
 app = Flask(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent
+TEMPLATE_PATH = BASE_DIR / "letterhead_template.docx"
 OUTPUT_DIR = BASE_DIR / "generated"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
@@ -34,12 +38,12 @@ def generate_docx():
     try:
         html = final_html if final_html else text_to_html(translated_text)
         html_path = write_html_file(html)
-       converted_docx = convert_html_to_docx(html_path)
-apply_docx_layout(converted_docx)
+      converted_docx = convert_html_to_docx(html_path)
 
-        filename = f"{job_number}-Final-Translation-{uuid.uuid4().hex[:8]}.docx"
-        output_path = OUTPUT_DIR / filename
-        os.replace(converted_docx, output_path)
+filename = f"{job_number}-Final-Translation-{uuid.uuid4().hex[:8]}.docx"
+output_path = OUTPUT_DIR / filename
+
+build_final_docx_from_template(converted_docx, output_path)
 
         base_url = request.host_url.rstrip("/")
         return jsonify({
@@ -184,6 +188,40 @@ def convert_html_to_docx(html_path):
         + " STDERR: "
         + (result.stderr or "")
     )
+def build_final_docx_from_template(content_docx_path, output_path):
+    if not TEMPLATE_PATH.exists():
+        raise RuntimeError(f"Template not found: {TEMPLATE_PATH}")
+
+    template_doc = Document(str(TEMPLATE_PATH))
+    content_doc = Document(str(content_docx_path))
+
+    apply_docx_layout_to_document(template_doc)
+
+    clear_body_keep_sections(template_doc)
+
+    for element in content_doc.element.body:
+        if element.tag.endswith('sectPr'):
+            continue
+        template_doc.element.body.append(deepcopy(element))
+
+    template_doc.save(str(output_path))
+
+
+def apply_docx_layout_to_document(doc):
+    for section in doc.sections:
+        section.top_margin = Cm(4.5)
+        section.bottom_margin = Cm(3.5)
+        section.right_margin = Cm(1.8)
+        section.left_margin = Cm(1.8)
+
+
+def clear_body_keep_sections(doc):
+    body = doc.element.body
+    sectPr = body.sectPr
+
+    for child in list(body):
+        if child is not sectPr:
+            body.remove(child)
 def apply_docx_layout(docx_path):
     doc = Document(str(docx_path))
 

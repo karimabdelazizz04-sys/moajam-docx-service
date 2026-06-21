@@ -3,7 +3,8 @@ import uuid
 import tempfile
 import subprocess
 from pathlib import Path
-
+from docx import Document
+from docx.shared import Cm
 from flask import Flask, request, jsonify, send_from_directory
 
 
@@ -33,7 +34,8 @@ def generate_docx():
     try:
         html = final_html if final_html else text_to_html(translated_text)
         html_path = write_html_file(html)
-        converted_docx = convert_html_to_docx(html_path)
+       converted_docx = convert_html_to_docx(html_path)
+apply_docx_layout(converted_docx)
 
         filename = f"{job_number}-Final-Translation-{uuid.uuid4().hex[:8]}.docx"
         output_path = OUTPUT_DIR / filename
@@ -182,6 +184,16 @@ def convert_html_to_docx(html_path):
         + " STDERR: "
         + (result.stderr or "")
     )
+def apply_docx_layout(docx_path):
+    doc = Document(str(docx_path))
+
+    for section in doc.sections:
+        section.top_margin = Cm(4.5)
+        section.bottom_margin = Cm(3.5)
+        section.right_margin = Cm(1.8)
+        section.left_margin = Cm(1.8)
+
+    doc.save(str(docx_path))
 
 def text_to_html(text):
     lines = []

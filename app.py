@@ -1,14 +1,14 @@
+```python
 import os
 import uuid
 import tempfile
 import subprocess
 from pathlib import Path
-from docx import Document
-from docx.shared import Cm
 from copy import deepcopy
+
+from flask import Flask, request, jsonify, send_from_directory
 from docx import Document
 from docx.shared import Cm
-from flask import Flask, request, jsonify, send_from_directory
 
 
 app = Flask(__name__)
@@ -38,12 +38,12 @@ def generate_docx():
     try:
         html = final_html if final_html else text_to_html(translated_text)
         html_path = write_html_file(html)
-        converted_docx = convert_html_to_docx(html_path)
+        content_docx = convert_html_to_docx(html_path)
 
         filename = f"{job_number}-Final-Translation-{uuid.uuid4().hex[:8]}.docx"
         output_path = OUTPUT_DIR / filename
 
-        build_final_docx_from_template(converted_docx, output_path)
+        build_final_docx_from_template(content_docx, output_path)
 
         base_url = request.host_url.rstrip("/")
         return jsonify({
@@ -145,6 +145,7 @@ li { margin-bottom: 3pt; }
     fd, path = tempfile.mkstemp(suffix=".html", dir=str(BASE_DIR))
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(full_html)
+
     return Path(path)
 
 
@@ -174,12 +175,11 @@ def convert_html_to_docx(html_path):
             + (result.stderr or "")
         )
 
-    candidates = list(out_dir.glob("*"))
-
     docx_candidates = list(out_dir.glob("*.docx"))
     if docx_candidates:
         return docx_candidates[0]
 
+    candidates = list(out_dir.glob("*"))
     raise RuntimeError(
         "LibreOffice did not create DOCX. Files created: "
         + ", ".join([p.name for p in candidates])
@@ -188,6 +188,8 @@ def convert_html_to_docx(html_path):
         + " STDERR: "
         + (result.stderr or "")
     )
+
+
 def build_final_docx_from_template(content_docx_path, output_path):
     if not TEMPLATE_PATH.exists():
         raise RuntimeError(f"Template not found: {TEMPLATE_PATH}")
@@ -195,43 +197,40 @@ def build_final_docx_from_template(content_docx_path, output_path):
     template_doc = Document(str(TEMPLATE_PATH))
     content_doc = Document(str(content_docx_path))
 
-    apply_docx_layout_to_document(template_doc)
+    apply_docx_layout(template_doc)
+    clear_template_body_only(template_doc)
 
-    clear_body_keep_sections(template_doc)
+    body = template_doc.element.body
+    sectPr = body.sectPr
 
     for element in content_doc.element.body:
-        if element.tag.endswith('sectPr'):
+        if element.tag.endswith("sectPr"):
             continue
-        template_doc.element.body.append(deepcopy(element))
+
+        if sectPr is not None:
+            body.insert(body.index(sectPr), deepcopy(element))
+        else:
+            body.append(deepcopy(element))
 
     template_doc.save(str(output_path))
 
 
-def apply_docx_layout_to_document(doc):
-    for section in doc.sections:
-        section.top_margin = Cm(4.5)
-        section.bottom_margin = Cm(3.5)
-        section.right_margin = Cm(1.8)
-        section.left_margin = Cm(1.8)
-
-
-def clear_body_keep_sections(doc):
+def clear_template_body_only(doc):
     body = doc.element.body
     sectPr = body.sectPr
 
     for child in list(body):
         if child is not sectPr:
             body.remove(child)
-def apply_docx_layout(docx_path):
-    doc = Document(str(docx_path))
 
+
+def apply_docx_layout(doc):
     for section in doc.sections:
         section.top_margin = Cm(4.5)
         section.bottom_margin = Cm(3.5)
         section.right_margin = Cm(1.8)
         section.left_margin = Cm(1.8)
 
-    doc.save(str(docx_path))
 
 def text_to_html(text):
     lines = []
@@ -239,6 +238,7 @@ def text_to_html(text):
         line = line.strip()
         if line:
             lines.append("<p>" + escape_html(line) + "</p>")
+
     return '<div dir="rtl" style="direction:rtl;text-align:justify">' + "\n".join(lines) + "</div>"
 
 
@@ -254,3 +254,4 @@ def clean_filename(value):
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
+```

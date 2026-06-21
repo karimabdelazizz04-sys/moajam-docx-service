@@ -1,28 +1,22 @@
 import os
-import re
 import uuid
+import tempfile
+import subprocess
+from pathlib import Path
 
-from bs4 import BeautifulSoup, NavigableString, Tag
 from flask import Flask, request, jsonify, send_from_directory
-from docx import Document
-from docx.shared import Cm, Pt, RGBColor
-from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.enum.table import WD_TABLE_ALIGNMENT, WD_CELL_VERTICAL_ALIGNMENT
-from docx.oxml import OxmlElement
-from docx.oxml.ns import qn
 
 
 app = Flask(__name__)
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-OUTPUT_DIR = os.path.join(BASE_DIR, "generated")
-TEMPLATE_PATH = os.path.join(BASE_DIR, "letterhead_template.docx")
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+BASE_DIR = Path(__file__).resolve().parent
+OUTPUT_DIR = BASE_DIR / "generated"
+OUTPUT_DIR.mkdir(exist_ok=True)
 
 
 @app.route("/")
 def home():
-    return "Moajam Template HTML DOCX Service Running"
+    return "Moajam LibreOffice HTML to DOCX Service Running"
 
 
 @app.route("/generate-docx", methods=["POST"])
@@ -36,20 +30,14 @@ def generate_docx():
     if not final_html and not translated_text:
         return jsonify({"status": "error", "message": "Missing final_html/translated_text"}), 400
 
-    if not os.path.exists(TEMPLATE_PATH):
-        return jsonify({"status": "error", "message": f"Template not found: {TEMPLATE_PATH}"}), 500
-
     try:
-        doc = Document(TEMPLATE_PATH)
-        setup_template_sections(doc)
-        set_document_defaults(doc)
-
         html = final_html if final_html else text_to_html(translated_text)
-        add_html_to_docx(doc, html)
+        html_path = write_html_file(html)
+        converted_docx = convert_html_to_docx(html_path)
 
         filename = f"{job_number}-Final-Translation-{uuid.uuid4().hex[:8]}.docx"
-        output_path = os.path.join(OUTPUT_DIR, filename)
-        doc.save(output_path)
+        output_path = OUTPUT_DIR / filename
+        os.replace(converted_docx, output_path)
 
         base_url = request.host_url.rstrip("/")
         return jsonify({
@@ -64,314 +52,132 @@ def generate_docx():
 
 @app.route("/download/<path:filename>")
 def download(filename):
-    return send_from_directory(OUTPUT_DIR, filename, as_attachment=True)
+    return send_from_directory(str(OUTPUT_DIR), filename, as_attachment=True)
+
+
+def write_html_file(inner_html):
+    full_html = """<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<style>
+@page {
+    size: A4;
+    margin-top: 4.5cm;
+    margin-bottom: 3.5cm;
+    margin-left: 1.8cm;
+    margin-right: 1.8cm;
+}
+html, body {
+    direction: rtl;
+    text-align: justify;
+    font-family: "Sakkal Majalla", "Arial", "Tahoma", sans-serif;
+    font-size: 14pt;
+    line-height: 1.35;
+}
+body { margin: 0; }
+p {
+    direction: rtl;
+    text-align: justify;
+    margin: 5pt 0;
+}
+h1 {
+    direction: rtl;
+    text-align: center;
+    font-size: 18pt;
+    font-weight: bold;
+    margin: 10pt 0 8pt 0;
+}
+h2 {
+    direction: rtl;
+    text-align: right;
+    font-size: 16pt;
+    font-weight: bold;
+    color: #1f4e79;
+    margin: 10pt 0 6pt 0;
+}
+h3, h4 {
+    direction: rtl;
+    text-align: right;
+    font-size: 14.5pt;
+    font-weight: bold;
+    color: #1f4e79;
+    margin: 8pt 0 5pt 0;
+}
+table {
+    width: 100%;
+    border-collapse: collapse;
+    direction: rtl;
+    margin: 8pt 0 12pt 0;
+}
+th, td {
+    border: 1px solid #555555;
+    padding: 4pt 6pt;
+    vertical-align: top;
+    text-align: right;
+    direction: rtl;
+    font-size: 11.5pt;
+}
+th {
+    background-color: #d9eaf7;
+    font-weight: bold;
+}
+ul, ol {
+    direction: rtl;
+    text-align: right;
+}
+li { margin-bottom: 3pt; }
+.page-break { page-break-before: always; }
+</style>
+</head>
+<body>
+""" + str(inner_html) + """
+</body>
+</html>
+"""
+
+    fd, path = tempfile.mkstemp(suffix=".html", dir=str(BASE_DIR))
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(full_html)
+    return Path(path)
+
+
+def convert_html_to_docx(html_path):
+    out_dir = Path(tempfile.mkdtemp(dir=str(BASE_DIR)))
+
+    cmd = [
+        "libreoffice",
+        "--headless",
+        "--convert-to",
+        "docx",
+        "--outdir",
+        str(out_dir),
+        str(html_path)
+    ]
 
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
 
-def setup_template_sections(doc):
-    for section in doc.sections:
-        section.top_margin = Cm(4.5)
-        section.bottom_margin = Cm(3.5)
-        section.left_margin = Cm(1.8)
-        section.right_margin = Cm(1.8)
-        section.header_distance = Cm(0)
-        section.footer_distance = Cm(0)
+    if result.returncode != 0:
+        raise RuntimeError("LibreOffice failed: " + ((result.stderr or result.stdout or "").strip()))
 
+    expected = out_dir / (html_path.stem + ".docx")
+    if expected.exists():
+        return expected
 
-def set_document_defaults(doc):
-    normal = doc.styles["Normal"]
-    normal.font.name = "Sakkal Majalla"
-    normal.font.size = Pt(14)
-    normal._element.rPr.rFonts.set(qn("w:cs"), "Sakkal Majalla")
-    normal._element.rPr.rFonts.set(qn("w:eastAsia"), "Sakkal Majalla")
+    candidates = list(out_dir.glob("*.docx"))
+    if candidates:
+        return candidates[0]
 
-
-def add_html_to_docx(doc, html):
-    soup = BeautifulSoup(str(html), "html5lib")
-    body = soup.body if soup.body else soup
-    for child in body.children:
-        add_node(doc, child)
-
-
-def add_node(doc, node):
-    if isinstance(node, NavigableString):
-        text = str(node).strip()
-        if text:
-            add_paragraph(doc, text)
-        return
-
-    if not isinstance(node, Tag):
-        return
-
-    name = node.name.lower()
-
-    if name in ["html", "body", "section", "article", "main", "div"]:
-        direct_complex = node.find(["table", "h1", "h2", "h3", "h4", "ul", "ol"], recursive=False)
-        if direct_complex:
-            for child in node.children:
-                add_node(doc, child)
-        else:
-            text = clean_text(node.get_text("\n", strip=True))
-            if text:
-                add_paragraph(doc, text, bold=element_is_bold(node), align=get_align(node, "justify"), color=get_color(node), size=get_font_size(node, 14))
-        return
-
-    if name in ["h1", "h2", "h3", "h4"]:
-        size = {"h1": 18, "h2": 16, "h3": 15, "h4": 14}.get(name, 14)
-        default_align = "center" if name == "h1" else "right"
-        add_paragraph(doc, node.get_text(" ", strip=True), bold=True, size=size, align=get_align(node, default_align), color=get_color(node))
-        return
-
-    if name == "p":
-        text = clean_text(node.get_text("\n", strip=True))
-        if text:
-            add_paragraph(doc, text, bold=element_is_bold(node), align=get_align(node, "justify"), color=get_color(node), size=get_font_size(node, 14))
-        return
-
-    if name == "br":
-        doc.add_paragraph("")
-        return
-
-    if name in ["ul", "ol"]:
-        for li in node.find_all("li", recursive=False):
-            add_paragraph(doc, "• " + clean_text(li.get_text(" ", strip=True)), align="justify")
-        return
-
-    if name == "table":
-        add_table(doc, node)
-        return
-
-    if name in ["style", "script", "meta", "head", "title"]:
-        return
-
-    text = clean_text(node.get_text("\n", strip=True))
-    if text:
-        add_paragraph(doc, text)
-
-
-def add_paragraph(doc, text, bold=False, size=14, align="justify", color=None):
-    text = clean_text(text)
-    if not text:
-        return
-
-    lines = [line.strip() for line in str(text).split("\n") if line.strip()]
-    for line in lines:
-        p = doc.add_paragraph()
-        set_paragraph_rtl(p)
-        p.alignment = {
-            "center": WD_ALIGN_PARAGRAPH.CENTER,
-            "left": WD_ALIGN_PARAGRAPH.LEFT,
-            "right": WD_ALIGN_PARAGRAPH.RIGHT,
-            "justify": WD_ALIGN_PARAGRAPH.JUSTIFY,
-        }.get(align, WD_ALIGN_PARAGRAPH.JUSTIFY)
-
-        p.paragraph_format.space_after = Pt(4)
-        p.paragraph_format.space_before = Pt(0)
-        p.paragraph_format.line_spacing = 1.1
-
-        run = p.add_run(line)
-        run.bold = bool(bold)
-        run.font.name = "Sakkal Majalla"
-        run.font.size = Pt(size)
-
-        rgb = parse_color(color)
-        if rgb:
-            run.font.color.rgb = RGBColor(*rgb)
-
-        run._element.rPr.rFonts.set(qn("w:cs"), "Sakkal Majalla")
-        run._element.rPr.rFonts.set(qn("w:eastAsia"), "Sakkal Majalla")
-
-
-def add_table(doc, table_el):
-    rows = []
-    max_cols = 0
-
-    for tr in table_el.find_all("tr"):
-        cells = tr.find_all(["th", "td"], recursive=False)
-        if not cells:
-            continue
-
-        row = []
-        for cell in cells:
-            text = clean_text(cell.get_text("\n", strip=True))
-            row.append({
-                "text": text,
-                "header": cell.name.lower() == "th" or bool(tr.find("th")),
-                "bg": get_background(cell) or get_background(tr),
-                "color": get_color(cell),
-                "bold": element_is_bold(cell) or cell.name.lower() == "th",
-            })
-
-        rows.append(row)
-        max_cols = max(max_cols, len(row))
-
-    if not rows or max_cols < 1:
-        return
-
-    table = doc.add_table(rows=0, cols=max_cols)
-    table.style = "Table Grid"
-    table.alignment = WD_TABLE_ALIGNMENT.RIGHT
-    set_table_rtl(table)
-
-    for row in rows:
-        cells = table.add_row().cells
-        for i in range(max_cols):
-            item = row[i] if i < len(row) else {"text": "", "header": False, "bg": None, "color": None, "bold": False}
-            bg = item["bg"] or ("#d9eaf7" if item["header"] else None)
-            set_cell(cells[i], item["text"], bold=item["bold"] or item["header"], bg=bg, color=item["color"])
-
-    doc.add_paragraph("")
-
-
-def set_cell(cell, text, bold=False, bg=None, color=None):
-    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
-    cell.text = ""
-
-    if bg:
-        fill = normalize_hex(bg)
-        if fill:
-            tc_pr = cell._tc.get_or_add_tcPr()
-            shd = tc_pr.find(qn("w:shd"))
-            if shd is None:
-                shd = OxmlElement("w:shd")
-                tc_pr.append(shd)
-            shd.set(qn("w:fill"), fill)
-
-    p = cell.paragraphs[0]
-    set_paragraph_rtl(p)
-    p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-    p.paragraph_format.space_after = Pt(0)
-    p.paragraph_format.space_before = Pt(0)
-
-    run = p.add_run(str(text or ""))
-    run.bold = bool(bold)
-    run.font.name = "Sakkal Majalla"
-    run.font.size = Pt(11)
-
-    rgb = parse_color(color)
-    if rgb:
-        run.font.color.rgb = RGBColor(*rgb)
-
-    run._element.rPr.rFonts.set(qn("w:cs"), "Sakkal Majalla")
-    run._element.rPr.rFonts.set(qn("w:eastAsia"), "Sakkal Majalla")
-
-
-def set_paragraph_rtl(paragraph):
-    pPr = paragraph._p.get_or_add_pPr()
-
-    bidi = pPr.find(qn("w:bidi"))
-    if bidi is None:
-        bidi = OxmlElement("w:bidi")
-        pPr.append(bidi)
-    bidi.set(qn("w:val"), "1")
-
-    jc = pPr.find(qn("w:jc"))
-    if jc is None:
-        jc = OxmlElement("w:jc")
-        pPr.append(jc)
-    jc.set(qn("w:val"), "both")
-
-
-def set_table_rtl(table):
-    tblPr = table._tbl.tblPr
-    bidi_visual = tblPr.find(qn("w:bidiVisual"))
-    if bidi_visual is None:
-        bidi_visual = OxmlElement("w:bidiVisual")
-        tblPr.append(bidi_visual)
-
-
-def get_style(el):
-    return (el.get("style") or "") if isinstance(el, Tag) else ""
-
-
-def get_align(el, default="justify"):
-    style = get_style(el).lower().replace(" ", "")
-    if "text-align:center" in style:
-        return "center"
-    if "text-align:left" in style:
-        return "left"
-    if "text-align:right" in style:
-        return "right"
-    if "text-align:justify" in style:
-        return "justify"
-
-    align = (el.get("align") or "").lower() if isinstance(el, Tag) else ""
-    if align in ["right", "left", "center", "justify"]:
-        return align
-    return default
-
-
-def element_is_bold(el):
-    style = get_style(el).lower().replace(" ", "")
-    if "font-weight:bold" in style or "font-weight:700" in style:
-        return True
-    if isinstance(el, Tag) and el.find(["b", "strong"]):
-        return True
-    return False
-
-
-def get_color(el):
-    style = get_style(el)
-    m = re.search(r"(?<!-)color\s*:\s*(#[0-9a-fA-F]{3,6})", style)
-    return m.group(1) if m else None
-
-
-def get_background(el):
-    style = get_style(el)
-    m = re.search(r"background(?:-color)?\s*:\s*(#[0-9a-fA-F]{3,6})", style)
-    return m.group(1) if m else None
-
-
-def get_font_size(el, default):
-    style = get_style(el)
-    m = re.search(r"font-size\s*:\s*([0-9.]+)pt", style)
-    if not m:
-        return default
-    try:
-        value = float(m.group(1))
-        return max(8, min(24, value))
-    except Exception:
-        return default
-
-
-def normalize_hex(value):
-    if not value:
-        return None
-    value = str(value).strip()
-    if not value.startswith("#"):
-        return None
-    value = value[1:]
-    if len(value) == 3:
-        value = "".join(ch * 2 for ch in value)
-    if len(value) != 6:
-        return None
-    return value.upper()
-
-
-def parse_color(value):
-    hx = normalize_hex(value)
-    if not hx:
-        return None
-    try:
-        return (int(hx[0:2], 16), int(hx[2:4], 16), int(hx[4:6], 16))
-    except Exception:
-        return None
-
-
-def clean_text(text):
-    text = str(text or "")
-    text = text.replace("\xa0", " ")
-    text = re.sub(r"[ \t]+", " ", text)
-    text = re.sub(r"\n{3,}", "\n\n", text)
-    return text.strip()
+    raise RuntimeError("LibreOffice did not create a DOCX file")
 
 
 def text_to_html(text):
     lines = []
     for line in str(text or "").splitlines():
-        line = clean_text(line)
+        line = line.strip()
         if line:
-            lines.append(f"<p>{escape_html(line)}</p>")
-    return '<div dir="rtl" style="direction:rtl;text-align:right">' + "\n".join(lines) + "</div>"
+            lines.append("<p>" + escape_html(line) + "</p>")
+    return '<div dir="rtl" style="direction:rtl;text-align:justify">' + "\n".join(lines) + "</div>"
 
 
 def escape_html(value):

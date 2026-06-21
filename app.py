@@ -38,12 +38,12 @@ def generate_docx():
     try:
         html = final_html if final_html else text_to_html(translated_text)
         html_path = write_html_file(html)
-      converted_docx = convert_html_to_docx(html_path)
+        converted_docx = convert_html_to_docx(html_path)
 
-filename = f"{job_number}-Final-Translation-{uuid.uuid4().hex[:8]}.docx"
-output_path = OUTPUT_DIR / filename
+        filename = f"{job_number}-Final-Translation-{uuid.uuid4().hex[:8]}.docx"
+        output_path = OUTPUT_DIR / filename
 
-build_final_docx_from_template(converted_docx, output_path)
+        build_final_docx_from_template(converted_docx, output_path)
 
         base_url = request.host_url.rstrip("/")
         return jsonify({

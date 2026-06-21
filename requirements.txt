@@ -1,6 +1,2 @@
 flask
-requests
 gunicorn
-python-docx
-beautifulsoup4
-html5lib

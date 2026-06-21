@@ -1,6 +1,6 @@
 services:
   - type: web
     name: moajam-docx-service
-    env: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app
+    env: docker
+    plan: free
+    autoDeploy: true

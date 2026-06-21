@@ -146,30 +146,42 @@ def convert_html_to_docx(html_path):
     out_dir = Path(tempfile.mkdtemp(dir=str(BASE_DIR)))
 
     cmd = [
-        "libreoffice",
+        "soffice",
         "--headless",
+        "--nologo",
+        "--nofirststartwizard",
+        "--invisible",
         "--convert-to",
-        "docx",
+        "docx:MS Word 2007 XML",
         "--outdir",
         str(out_dir),
         str(html_path)
     ]
 
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
 
     if result.returncode != 0:
-        raise RuntimeError("LibreOffice failed: " + ((result.stderr or result.stdout or "").strip()))
+        raise RuntimeError(
+            "LibreOffice failed. STDOUT: "
+            + (result.stdout or "")
+            + " STDERR: "
+            + (result.stderr or "")
+        )
 
-    expected = out_dir / (html_path.stem + ".docx")
-    if expected.exists():
-        return expected
+    candidates = list(out_dir.glob("*"))
 
-    candidates = list(out_dir.glob("*.docx"))
-    if candidates:
-        return candidates[0]
+    docx_candidates = list(out_dir.glob("*.docx"))
+    if docx_candidates:
+        return docx_candidates[0]
 
-    raise RuntimeError("LibreOffice did not create a DOCX file")
-
+    raise RuntimeError(
+        "LibreOffice did not create DOCX. Files created: "
+        + ", ".join([p.name for p in candidates])
+        + " STDOUT: "
+        + (result.stdout or "")
+        + " STDERR: "
+        + (result.stderr or "")
+    )
 
 def text_to_html(text):
     lines = []
